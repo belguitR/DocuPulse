@@ -5,6 +5,8 @@ frontend/dist/
 backend/dist/
 .env
 .env.*
+!backend/.env
+!frontend/.env
 backend/uploads/
 meili_data/
 .codex-logs/
