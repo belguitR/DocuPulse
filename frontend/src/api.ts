@@ -1,4 +1,4 @@
-import type { HealthResponse, IndexResponse, SearchResponse } from "./types";
+import type { DocumentsResponse, HealthResponse, IndexResponse, SearchResponse } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3001";
 
@@ -28,6 +28,11 @@ export async function indexDocuments(formData: FormData): Promise<IndexResponse>
   });
 
   return readJson<IndexResponse>(response);
+}
+
+export async function fetchDocuments(): Promise<DocumentsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/documents`);
+  return readJson<DocumentsResponse>(response);
 }
 
 export async function searchDocuments(query: string): Promise<SearchResponse> {

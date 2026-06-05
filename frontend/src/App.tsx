@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   CalendarDays,
@@ -17,8 +17,8 @@ import {
   Upload,
 } from "lucide-react";
 import "./App.css";
-import { fetchHealth, indexDocuments, searchDocuments } from "./api";
-import type { HealthResponse, SearchHit } from "./types";
+import { fetchDocuments, fetchHealth, indexDocuments, searchDocuments } from "./api";
+import type { DocumentSummary, HealthResponse, SearchHit } from "./types";
 
 type View = "overview" | "search" | "ingestion";
 
@@ -26,13 +26,19 @@ type ActivityItem = {
   id: string;
   title: string;
   fileName: string;
+  contentLength: number;
   sizeLabel: string;
   typeLabel: string;
   tags: string[];
-  status: "indexed" | "indexing" | "failed";
+  status: "queued" | "parsing" | "indexing" | "indexed" | "failed";
   progress: number;
   uploadedAt: string;
   source: string;
+};
+
+type ProcessingPhase = {
+  label: string;
+  detail: string;
 };
 
 const quickSuggestions = ["api_specs_2024", "network_topology", "security_audit"];
@@ -45,16 +51,22 @@ const horizonOptions = [
 ];
 
 function App() {
+  const dragDepthRef = useRef(0);
   const [activeView, setActiveView] = useState<View>("overview");
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [tags, setTags] = useState("");
   const [source, setSource] = useState("manual-upload");
   const [documentType, setDocumentType] = useState("pdf");
   const [indexingMessage, setIndexingMessage] = useState("");
   const [indexingError, setIndexingError] = useState("");
   const [isIndexing, setIsIndexing] = useState(false);
+  const [processingPhase, setProcessingPhase] = useState<ProcessingPhase>({
+    label: "Idle",
+    detail: "Select PDFs, then start indexing.",
+  });
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const [searchMeta, setSearchMeta] = useState("");
@@ -67,6 +79,7 @@ function App() {
 
   useEffect(() => {
     void loadHealth();
+    void loadDocuments();
   }, []);
 
   const selectedFilesLabel = useMemo(() => {
@@ -84,9 +97,14 @@ function App() {
   const indexedCount = activityItems.filter((item) => item.status === "indexed").length;
   const totalDocuments = activityItems.length;
   const totalSizeInMb = activityItems.reduce((sum, item) => sum + Number(item.sizeLabel.replace(/[^\d.]/g, "") || 0), 0);
-  const estimatedPages = Math.max(0, Math.round(totalSizeInMb * 14));
+  const estimatedPages = Math.max(
+    0,
+    Math.round(activityItems.reduce((sum, item) => sum + estimatePages(item), 0)),
+  );
   const queueProgress = activityItems.length === 0 ? 0 : Math.round(activityItems.reduce((sum, item) => sum + item.progress, 0) / activityItems.length);
   const latestActivity = activityItems[0];
+  const parsedCount = activityItems.filter((item) => ["indexing", "indexed"].includes(item.status)).length;
+  const failedCount = activityItems.filter((item) => item.status === "failed").length;
 
   const filteredResults = useMemo(() => {
     return searchResults.filter((hit) => {
@@ -98,7 +116,7 @@ function App() {
     });
   }, [horizonFilter, searchResults, sourceFilter, taxonomyFilter]);
 
-  const queueActiveCount = activityItems.filter((item) => item.status === "indexing").length;
+  const queueActiveCount = activityItems.filter((item) => ["queued", "parsing", "indexing"].includes(item.status)).length;
 
   async function loadHealth() {
     try {
@@ -114,6 +132,22 @@ function App() {
     }
   }
 
+  async function loadDocuments() {
+    try {
+      const response = await fetchDocuments();
+      setActivityItems(response.documents.map(documentToActivity).sort((left, right) => new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()));
+
+      if (response.documents.length > 0) {
+        setProcessingPhase({
+          label: "Complete",
+          detail: `${response.documents.length} indexed document(s) are searchable.`,
+        });
+      }
+    } catch {
+      // The health indicator already reports backend/search availability.
+    }
+  }
+
   async function handleIndexSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -124,7 +158,8 @@ function App() {
 
     const formData = new FormData();
     const currentTags = splitTags(tags);
-    const pendingItems = files.map((file) => createPendingActivity(file, currentTags, source, documentType));
+    const batchId = crypto.randomUUID();
+    const pendingItems = files.map((file, index) => createPendingActivity(file, currentTags, source, documentType, batchId, index));
 
     for (const file of files) {
       formData.append("files", file);
@@ -140,20 +175,37 @@ function App() {
       setIsIndexing(true);
       setIndexingError("");
       setIndexingMessage("");
+      setProcessingPhase({
+        label: "PDF parsing",
+        detail: `${files.length} file(s) received. Extracting text before search indexing.`,
+      });
+      setActivityItems((previous) => advanceBatch(previous, pendingItems, "parsing", 35));
+
+      await waitForUiFrame();
+      setProcessingPhase({
+        label: "Search indexing",
+        detail: "Text extracted. Sending structured records to Meilisearch.",
+      });
+      setActivityItems((previous) => advanceBatch(previous, pendingItems, "indexing", 82));
+
       const response = await indexDocuments(formData);
 
       setActivityItems((previous) =>
         previous.map((item) => {
-          const matched = response.documents.find((document) => document.fileName === item.fileName);
+          const pendingIndex = pendingItems.findIndex((pending) => pending.id === item.id);
 
-          if (!matched) {
+          if (pendingIndex === -1) {
             return item;
           }
 
+          const matched = response.documents[pendingIndex];
+
           return {
             ...item,
-            id: matched.id,
-            title: matched.title,
+            id: matched?.id ?? item.id,
+            title: matched?.title ?? item.title,
+            fileName: matched?.fileName ?? item.fileName,
+            contentLength: matched?.contentLength ?? item.contentLength,
             status: "indexed",
             progress: 100,
           };
@@ -161,12 +213,21 @@ function App() {
       );
 
       setFiles([]);
+      setProcessingPhase({
+        label: "Complete",
+        detail: `${response.indexedCount} document(s) are searchable now.`,
+      });
       setIndexingMessage(`${response.indexedCount} document(s) indexed successfully.`);
       await loadHealth();
+      await loadDocuments();
     } catch (error) {
       setActivityItems((previous) =>
         previous.map((item) => (pendingItems.some((pending) => pending.id === item.id) ? { ...item, status: "failed", progress: 100 } : item)),
       );
+      setProcessingPhase({
+        label: "Failed",
+        detail: "Indexing stopped before completion. Check the error message below.",
+      });
       setIndexingError(error instanceof Error ? error.message : "Indexing failed.");
     } finally {
       setIsIndexing(false);
@@ -176,6 +237,55 @@ function App() {
   async function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runSearch(query);
+  }
+
+  function addSelectedFiles(candidateFiles: File[]) {
+    const pdfFiles = candidateFiles.filter((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"));
+
+    if (pdfFiles.length === 0) {
+      setIndexingError("Only PDF files are supported in this POC.");
+      return;
+    }
+
+    setIndexingError("");
+    const nextFiles = mergeFiles(files, pdfFiles);
+    setProcessingPhase({
+      label: "Ready",
+      detail: `${nextFiles.length} PDF file(s) selected for indexing.`,
+    });
+    setFiles(nextFiles);
+  }
+
+  function handleFileInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+    addSelectedFiles(Array.from(event.target.files ?? []));
+    event.target.value = "";
+  }
+
+  function handleDropzoneDragEnter(event: React.DragEvent<HTMLElement>) {
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDraggingFiles(true);
+  }
+
+  function handleDropzoneDragOver(event: React.DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDropzoneDragLeave(event: React.DragEvent<HTMLElement>) {
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+
+    if (dragDepthRef.current === 0) {
+      setIsDraggingFiles(false);
+    }
+  }
+
+  function handleDropzoneDrop(event: React.DragEvent<HTMLElement>) {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDraggingFiles(false);
+    addSelectedFiles(Array.from(event.dataTransfer.files ?? []));
   }
 
   async function runSearch(rawQuery: string) {
@@ -344,6 +454,7 @@ function App() {
                     <div className="progress-track">
                       <span style={{ width: `${queueProgress}%` }} />
                     </div>
+                    <p className="queue-phase">{processingPhase.label}: {processingPhase.detail}</p>
                   </div>
 
                   <ul className="cluster-list">
@@ -526,11 +637,17 @@ function App() {
               <div className="ingestion-layout">
                 <div className="ingestion-main">
                   <form className="dropzone-card" onSubmit={handleIndexSubmit}>
-                    <label className="dropzone-surface">
+                    <label
+                      className={isDraggingFiles ? "dropzone-surface is-dragging" : "dropzone-surface"}
+                      onDragEnter={handleDropzoneDragEnter}
+                      onDragLeave={handleDropzoneDragLeave}
+                      onDragOver={handleDropzoneDragOver}
+                      onDrop={handleDropzoneDrop}
+                    >
                       <input
                         accept="application/pdf"
                         multiple
-                        onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+                        onChange={handleFileInputChange}
                         type="file"
                       />
                       <div className="dropzone-icon">
@@ -540,13 +657,18 @@ function App() {
                       <p>
                         or <span>browse your local files</span>
                       </p>
-                      <small>MAX 50MB • PDF</small>
+                      <small>MAX 50MB - PDF</small>
                     </label>
 
                     <div className="dropzone-meta">
                       <div className="meta-field">
                         <span>Selected files</span>
                         <strong>{selectedFilesLabel}</strong>
+                      </div>
+                      <div className="meta-field">
+                        <span>Processing phase</span>
+                        <strong>{processingPhase.label}</strong>
+                        <small>{processingPhase.detail}</small>
                       </div>
                       <div className="meta-field">
                         <span>Source</span>
@@ -616,10 +738,11 @@ function App() {
                             <div className="activity-copy">
                               <strong>{item.fileName}</strong>
                               <span>
-                                {item.sizeLabel} • {item.typeLabel.toUpperCase()}
+                                {item.sizeLabel} - {item.typeLabel.toUpperCase()}
                               </span>
                             </div>
                             <div className="activity-tags">
+                              <span className={`status-token status-${item.status}`}>{statusLabel(item.status)}</span>
                               {item.tags.map((tag) => (
                                 <span className="doc-pill" key={`${item.id}-${tag}`}>
                                   {tag}
@@ -630,7 +753,7 @@ function App() {
                               <div className="progress-track slim">
                                 <span style={{ width: `${item.progress}%` }} />
                               </div>
-                              <span>{item.status === "indexed" ? <CheckCircle2 size={16} /> : <Clock3 size={16} />}</span>
+                              <span>{item.status === "indexed" ? <CheckCircle2 size={16} /> : item.status === "failed" ? <Database size={16} /> : <Clock3 size={16} />}</span>
                             </div>
                           </article>
                         ))
@@ -658,22 +781,27 @@ function App() {
                     <div>
                       <div className="queue-labels">
                         <span>PDF parsing</span>
+                        <strong>{parsedCount} / {totalDocuments}</strong>
+                      </div>
+                      <div className="progress-track slim">
+                        <span style={{ width: `${totalDocuments === 0 ? 0 : (parsedCount / totalDocuments) * 100}%` }} />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="queue-labels">
+                        <span>Search indexing</span>
                         <strong>{indexedCount} / {totalDocuments}</strong>
                       </div>
                       <div className="progress-track slim">
                         <span style={{ width: `${totalDocuments === 0 ? 0 : (indexedCount / totalDocuments) * 100}%` }} />
                       </div>
                     </div>
-
-                    <div>
-                      <div className="queue-labels">
-                        <span>Vector indexing</span>
-                        <strong>{queueProgress}%</strong>
+                    {failedCount > 0 ? (
+                      <div className="queue-error">
+                        {failedCount} failed item(s)
                       </div>
-                      <div className="progress-track slim">
-                        <span style={{ width: `${queueProgress}%` }} />
-                      </div>
-                    </div>
+                    ) : null}
                   </div>
 
                   <button className="ghost-button full-width" onClick={() => setActiveView("overview")} type="button">
@@ -759,19 +887,107 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function createPendingActivity(file: File, tags: string[], source: string, documentType: string): ActivityItem {
+function createPendingActivity(
+  file: File,
+  tags: string[],
+  source: string,
+  documentType: string,
+  batchId: string,
+  index: number,
+): ActivityItem {
   return {
-    id: `pending-${crypto.randomUUID()}`,
+    id: `pending-${batchId}-${index}`,
     title: file.name.replace(/\.pdf$/i, ""),
     fileName: file.name,
+    contentLength: 0,
     sizeLabel: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
     typeLabel: documentType,
     tags,
-    status: "indexing",
-    progress: 72,
+    status: "queued",
+    progress: 8,
     uploadedAt: new Date().toISOString(),
     source,
   };
+}
+
+function advanceBatch(
+  items: ActivityItem[],
+  pendingItems: ActivityItem[],
+  status: ActivityItem["status"],
+  progress: number,
+): ActivityItem[] {
+  const pendingIds = new Set(pendingItems.map((item) => item.id));
+
+  return items.map((item) => (pendingIds.has(item.id) ? { ...item, status, progress } : item));
+}
+
+function statusLabel(status: ActivityItem["status"]): string {
+  if (status === "queued") {
+    return "Queued";
+  }
+
+  if (status === "parsing") {
+    return "Parsing";
+  }
+
+  if (status === "indexing") {
+    return "Indexing";
+  }
+
+  if (status === "indexed") {
+    return "Complete";
+  }
+
+  return "Failed";
+}
+
+function estimatePages(item: ActivityItem): number {
+  if (item.contentLength > 0) {
+    return Math.max(1, Math.round(item.contentLength / 2500));
+  }
+
+  return Math.max(1, Math.round(Number(item.sizeLabel.replace(/[^\d.]/g, "")) * 12));
+}
+
+function documentToActivity(document: DocumentSummary): ActivityItem {
+  return {
+    id: document.id,
+    title: document.title,
+    fileName: document.fileName,
+    contentLength: document.contentLength,
+    sizeLabel: `${Math.max(0.1, document.contentLength / (1024 * 1024)).toFixed(1)} MB`,
+    typeLabel: document.documentType,
+    tags: document.tags,
+    status: "indexed",
+    progress: 100,
+    uploadedAt: document.uploadedAt,
+    source: document.source,
+  };
+}
+
+function waitForUiFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 120);
+  });
+}
+
+function mergeFiles(existingFiles: File[], incomingFiles: File[]): File[] {
+  const mergedFiles = [...existingFiles];
+
+  for (const incomingFile of incomingFiles) {
+    const alreadyTracked = mergedFiles.some(
+      (existingFile) =>
+        existingFile.name === incomingFile.name &&
+        existingFile.size === incomingFile.size &&
+        existingFile.lastModified === incomingFile.lastModified,
+    );
+
+    if (!alreadyTracked) {
+      mergedFiles.push(incomingFile);
+    }
+  }
+
+  return mergedFiles;
 }
 
 function matchesHorizon(uploadedAt: string, horizon: string): boolean {

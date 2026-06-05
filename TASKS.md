@@ -43,6 +43,6 @@ Status legend:
 
 - [x] Run backend build
 - [x] Run frontend build
-- [ ] Start Meilisearch locally
-- [ ] Smoke test end-to-end indexing and search
+- [x] Start Meilisearch locally
+- [x] Smoke test end-to-end indexing and search
 - [ ] Capture screenshots for presentation

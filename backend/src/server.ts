@@ -59,6 +59,7 @@ app.post("/api/documents/index", upload.array("files"), async (req, res) => {
     const documents: IndexedDocument[] = [];
 
     for (const file of files) {
+      const fileName = normalizeFileName(file.originalname);
       const parsed = await pdf(file.buffer);
       const content = normalizeText(parsed.text ?? "");
 
@@ -68,8 +69,8 @@ app.post("/api/documents/index", upload.array("files"), async (req, res) => {
 
       documents.push({
         id: randomUUID(),
-        title: path.parse(file.originalname).name,
-        fileName: file.originalname,
+        title: path.parse(fileName).name,
+        fileName,
         content,
         tags,
         uploadedAt: new Date().toISOString(),
@@ -93,10 +94,40 @@ app.post("/api/documents/index", upload.array("files"), async (req, res) => {
         id: document.id,
         title: document.title,
         fileName: document.fileName,
+        contentLength: document.content.length,
       })),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown indexing error";
+
+    res.status(500).json({ error: message });
+  }
+});
+
+app.get("/api/documents", async (_req, res) => {
+  try {
+    await ensureIndexReady();
+
+    const index = meiliClient.index<IndexedDocument>(config.meilisearchIndex);
+    const response = await index.getDocuments({
+      limit: 50,
+      fields: ["id", "title", "fileName", "content", "tags", "uploadedAt", "documentType", "source"],
+    });
+
+    res.json({
+      documents: response.results.map((document) => ({
+        id: document.id,
+        title: normalizeFileName(document.title),
+        fileName: normalizeFileName(document.fileName),
+        contentLength: document.content.length,
+        tags: document.tags,
+        uploadedAt: document.uploadedAt,
+        documentType: document.documentType,
+        source: document.source,
+      })),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown document listing error";
 
     res.status(500).json({ error: message });
   }
@@ -127,6 +158,8 @@ app.get("/api/search", async (req, res) => {
 
       const result: SearchResult = {
         ...hit,
+        title: normalizeFileName(hit.title),
+        fileName: normalizeFileName(hit.fileName),
         snippet,
       };
 
@@ -148,3 +181,11 @@ app.get("/api/search", async (req, res) => {
 app.listen(config.port, () => {
   console.log(`Backend listening on http://127.0.0.1:${config.port}`);
 });
+
+function normalizeFileName(value: string): string {
+  if (!/[ÃÂ]/.test(value)) {
+    return value;
+  }
+
+  return Buffer.from(value, "latin1").toString("utf8");
+}

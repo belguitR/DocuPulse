@@ -11,6 +11,7 @@ export type IndexResponse = {
     id: string;
     title: string;
     fileName: string;
+    contentLength?: number;
   }>;
 };
 
@@ -30,4 +31,19 @@ export type SearchResponse = {
   query: string;
   estimatedTotalHits: number;
   hits: SearchHit[];
+};
+
+export type DocumentSummary = {
+  id: string;
+  title: string;
+  fileName: string;
+  contentLength: number;
+  tags: string[];
+  uploadedAt: string;
+  documentType: string;
+  source: string;
+};
+
+export type DocumentsResponse = {
+  documents: DocumentSummary[];
 };

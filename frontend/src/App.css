@@ -399,6 +399,13 @@
   font-size: 0.94rem;
 }
 
+.queue-phase {
+  margin: 10px 0 0;
+  color: #6f6051;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .progress-track {
   position: relative;
   height: 10px;
@@ -720,6 +727,13 @@
   border-radius: 12px;
   text-align: center;
   cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.dropzone-surface.is-dragging {
+  border-color: #8a6835;
+  background: #fcf6ec;
+  transform: scale(1.003);
 }
 
 .dropzone-surface input {
@@ -768,7 +782,7 @@
 
 .dropzone-meta {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -785,6 +799,14 @@
   padding: 0;
   border-bottom: 1px solid #ece4da;
   padding-bottom: 10px;
+}
+
+.meta-field small {
+  display: block;
+  margin-top: 8px;
+  color: #7a6c5e;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .tag-panel {
@@ -898,6 +920,42 @@
   gap: 8px;
 }
 
+.status-token {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.status-queued {
+  background: #f1efea;
+  color: #6d6156;
+}
+
+.status-parsing,
+.status-indexing {
+  background: #f4eadb;
+  color: #7b6032;
+}
+
+.status-indexed {
+  background: #e9f1e5;
+  color: #3f633d;
+}
+
+.status-failed {
+  background: #fae9e4;
+  color: #934b37;
+}
+
+.queue-error {
+  color: #934b37;
+  font-size: 0.9rem;
+}
+
 .activity-progress {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -977,7 +1035,7 @@
   }
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1100px) {
   .stats-grid,
   .overview-grid,
   .ingestion-layout,
