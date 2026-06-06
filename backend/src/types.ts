@@ -3,12 +3,17 @@ export type IndexedDocument = {
   title: string;
   fileName: string;
   content: string;
+  contentSearch?: string;
+  storedFileName?: string;
+  mimeType?: string;
+  originalFileUrl?: string;
+  previewFileUrl?: string;
   tags: string[];
   uploadedAt: string;
   documentType: string;
   source: string;
 };
 
-export type SearchResult = IndexedDocument & {
+export type SearchResult = Omit<IndexedDocument, "contentSearch"> & {
   snippet: string;
 };

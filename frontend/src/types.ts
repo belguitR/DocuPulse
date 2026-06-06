@@ -12,6 +12,8 @@ export type IndexResponse = {
     title: string;
     fileName: string;
     contentLength?: number;
+    originalFileUrl?: string;
+    previewFileUrl?: string;
   }>;
 };
 
@@ -20,6 +22,10 @@ export type SearchHit = {
   title: string;
   fileName: string;
   content: string;
+  storedFileName?: string;
+  mimeType?: string;
+  originalFileUrl?: string;
+  previewFileUrl?: string;
   tags: string[];
   uploadedAt: string;
   documentType: string;
@@ -38,6 +44,9 @@ export type DocumentSummary = {
   title: string;
   fileName: string;
   contentLength: number;
+  mimeType?: string;
+  originalFileUrl?: string;
+  previewFileUrl?: string;
   tags: string[];
   uploadedAt: string;
   documentType: string;

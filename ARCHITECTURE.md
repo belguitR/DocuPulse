@@ -13,7 +13,7 @@ The POC uses a thin three-part architecture:
 ### Frontend
 
 Responsibilities:
-- upload PDF files
+- upload PDF/DOCX files
 - trigger indexing requests
 - submit search queries
 - display results and status
@@ -27,7 +27,8 @@ Recommended implementation:
 ### Backend
 
 Responsibilities:
-- receive uploaded PDF files
+- receive uploaded PDF/DOCX files
+- store original uploaded files locally
 - extract text content
 - map files into the document schema
 - send documents to Meilisearch
@@ -37,7 +38,9 @@ Recommended implementation:
 - Node.js
 - Express
 - Multer for uploads
-- `pdf-parse` for text extraction
+- `pdf-parse` for PDF text extraction
+- `mammoth` for DOCX text extraction
+- local `backend/uploads` storage for original files
 
 ### Meilisearch
 
@@ -50,12 +53,13 @@ Responsibilities:
 
 ### Indexing Flow
 
-1. User uploads PDF from the frontend.
+1. User uploads a PDF or DOCX file from the frontend.
 2. Frontend sends file to the backend.
-3. Backend extracts text from the PDF.
-4. Backend creates a document object with metadata and content.
-5. Backend sends the document to Meilisearch.
-6. Backend returns indexing status to the frontend.
+3. Backend extracts text from the document.
+4. Backend saves the original file to local storage.
+5. Backend creates a document object with metadata, content, and file preview URLs.
+6. Backend sends the document to Meilisearch.
+7. Backend returns indexing status to the frontend.
 
 ### Search Flow
 
@@ -64,6 +68,13 @@ Responsibilities:
 3. Backend queries Meilisearch.
 4. Backend returns matched documents.
 5. Frontend renders results and snippets.
+
+### Preview Flow
+
+1. User clicks a result in the frontend.
+2. Frontend opens the document reader in `Original file` mode.
+3. For PDFs, the backend serves the original PDF inline.
+4. For DOCX files, the backend converts the stored original file to HTML and serves it inside the reader.
 
 ## Why This Architecture
 
@@ -84,6 +95,7 @@ Local development:
 - scanned PDFs may produce poor results without OCR
 - very large PDFs may need extra processing constraints
 - poor metadata quality can reduce result usefulness
+- old indexed records created before file storage must be reuploaded to get original previews
 
 ## Future Extensions
 

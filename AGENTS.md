@@ -30,7 +30,7 @@ Main outputs:
 
 Focus:
 - upload API
-- PDF parsing
+- PDF/DOCX parsing
 - indexing orchestration
 - search API
 
@@ -55,7 +55,7 @@ Main outputs:
 
 Focus:
 - verify end-to-end indexing
-- verify search relevance on sample PDFs
+- verify search relevance on sample PDF/DOCX files
 - verify local setup and demo readiness
 
 Main outputs:
@@ -67,16 +67,16 @@ Main outputs:
 1. Finalize scope and architecture.
 2. Scaffold frontend and backend.
 3. Start Meilisearch and connect the backend.
-4. Implement PDF upload and extraction.
+4. Implement PDF/DOCX upload and extraction.
 5. Implement indexing.
 6. Implement search UI.
-7. Test with sample PDFs.
+7. Test with sample PDF/DOCX files.
 8. Prepare screenshots and demo script.
 
 ## Definition of Done
 
 The POC is done when:
-- a PDF can be uploaded
+- a PDF or DOCX file can be uploaded
 - text is indexed in Meilisearch
 - a query returns matching documents
 - the interface is usable in a live presentation

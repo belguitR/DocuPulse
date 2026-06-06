@@ -1,13 +1,13 @@
-# Full-Text PDF Indexing POC
+# Full-Text Document Indexing POC
 
-This project is a proof of concept for `indexation et recherche plein texte` on PDF documents.
+This project is a proof of concept for `indexation et recherche plein texte` on PDF and DOCX documents.
 
 It lets a user:
-- upload PDF files
+- upload PDF or DOCX files
 - extract their text
 - index that text in Meilisearch
 - search across indexed content
-- view matching results with metadata and snippets
+- view matching results with metadata, snippets, extracted text, and original-file previews
 
 ## What You Need Before Starting
 
@@ -38,6 +38,8 @@ If one of these commands fails, install that tool first before continuing.
 - `backend`: Node.js + Express + TypeScript
 - `search engine`: Meilisearch
 - `PDF text extraction`: `pdf-parse`
+- `DOCX text extraction`: `mammoth`
+- `local file storage`: `backend/uploads`
 - `local search runtime`: Docker
 
 ## Project Structure
@@ -179,23 +181,25 @@ http://127.0.0.1:7700
 
 1. Open `http://127.0.0.1:5173`
 2. Go to `Ingestion`
-3. Select one or more PDF files
-4. Click `Index selected PDFs`
+3. Select one or more PDF/DOCX files
+4. Click `Index selected files`
 5. Wait for the success message
 6. Go to `Knowledge Search`
-7. Type words that exist inside the uploaded PDF
+7. Type words that exist inside the uploaded document
 8. Click `Search`
-9. Review the results and snippets
+9. Click a result to open the original file preview in the site
+10. Switch to `Extracted text` when you want highlighted search context
 
 ## How Document Import Works Right Now
 
 Current behavior:
 
-- PDF files are uploaded to the backend
+- PDF/DOCX files are uploaded to the backend
 - the backend reads them in memory
-- text is extracted from the PDFs
+- text is extracted from the files
+- the original file is saved locally in `backend/uploads`
 - extracted text and metadata are sent to Meilisearch
-- the raw PDF file itself is **not** stored permanently yet
+- the frontend can show the original preview through backend file routes
 
 Indexed fields are:
 
@@ -207,6 +211,9 @@ Indexed fields are:
 - `uploadedAt`
 - `documentType`
 - `source`
+- `mimeType`
+- `originalFileUrl`
+- `previewFileUrl`
 
 ## Useful Commands
 
@@ -275,8 +282,8 @@ npm run dev:frontend
 Possible causes:
 - Meilisearch is not running
 - backend is not running
-- the file is not a valid PDF
-- the PDF has no extractable text
+- the file is not a valid PDF or DOCX
+- the document has no extractable text
 
 Check:
 
@@ -291,8 +298,10 @@ and make sure both of these are running:
 ## Scope
 
 Included:
-- PDF ingestion
+- PDF/DOCX ingestion
 - text extraction
+- local original-file storage
+- original-file preview for PDFs and DOCX files
 - Meilisearch indexing
 - keyword search
 - metadata display

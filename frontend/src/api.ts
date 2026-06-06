@@ -39,3 +39,23 @@ export async function searchDocuments(query: string): Promise<SearchResponse> {
   const response = await fetch(`${API_BASE_URL}/api/search?q=${encodeURIComponent(query)}`);
   return readJson<SearchResponse>(response);
 }
+
+export async function openDocumentInDesktopApp(documentId: string): Promise<{ opened: boolean; autoReindex: boolean; fileName: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/files/${encodeURIComponent(documentId)}/open`, {
+    method: "POST",
+  });
+
+  return readJson<{ opened: boolean; autoReindex: boolean; fileName: string }>(response);
+}
+
+export function toApiUrl(path: string | undefined): string {
+  if (!path) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  return `${API_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+}

@@ -2,13 +2,13 @@
 
 ## Functional Requirements
 
-### FR-1 Upload PDFs
+### FR-1 Upload Documents
 
-The user can upload one or more PDF files from the browser.
+The user can upload one or more PDF or DOCX files from the browser.
 
 ### FR-2 Extract Text
 
-The system extracts textual content from uploaded PDFs.
+The system extracts textual content from uploaded PDF and DOCX files.
 
 ### FR-3 Index Documents
 
@@ -16,7 +16,7 @@ The system creates or updates searchable document records in Meilisearch.
 
 ### FR-4 Search Full Text
 
-The user can enter keywords and retrieve matching documents based on indexed PDF content.
+The user can enter keywords and retrieve matching documents based on indexed document content.
 
 ### FR-5 Display Results
 
@@ -28,11 +28,15 @@ Each result displays:
 - upload date
 - content snippet
 
-### FR-6 Show Indexing Feedback
+### FR-6 Open Original Preview
+
+When a user clicks a result, the interface opens the stored original file preview inside the site. PDFs are displayed inline by the browser. DOCX files are converted to browser-readable HTML from the stored original file.
+
+### FR-7 Show Indexing Feedback
 
 The interface shows whether indexing succeeded or failed.
 
-### FR-7 Basic Health Visibility
+### FR-8 Basic Health Visibility
 
 The frontend can detect whether the backend is reachable and whether the search stack is available.
 
@@ -48,6 +52,9 @@ Each indexed document contains:
 - `uploadedAt`
 - `documentType`
 - `source`
+- `mimeType`
+- `originalFileUrl`
+- `previewFileUrl`
 
 ## Non-Functional Requirements
 
@@ -77,8 +84,8 @@ The codebase must be organized clearly enough for quick iteration.
 
 ## Assumptions
 
-- input files are valid PDFs
-- most PDFs contain extractable text
+- input files are valid PDF or DOCX documents
+- most documents contain extractable text
 - scanned PDFs without embedded text are out of scope
 - local Docker is available for Meilisearch
 

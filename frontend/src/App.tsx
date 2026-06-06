@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
+  BookOpen,
   CalendarDays,
   CheckCircle2,
   Clock3,
@@ -15,9 +15,10 @@ import {
   Server,
   Settings2,
   Upload,
+  X,
 } from "lucide-react";
 import "./App.css";
-import { fetchDocuments, fetchHealth, indexDocuments, searchDocuments } from "./api";
+import { fetchDocuments, fetchHealth, indexDocuments, openDocumentInDesktopApp, searchDocuments, toApiUrl } from "./api";
 import type { DocumentSummary, HealthResponse, SearchHit } from "./types";
 
 type View = "overview" | "search" | "ingestion";
@@ -42,7 +43,7 @@ type ProcessingPhase = {
 };
 
 const quickSuggestions = ["api_specs_2024", "network_topology", "security_audit"];
-const taxonomyOptions = ["pdf", "report", "note"];
+const taxonomyOptions = ["pdf", "docx"];
 const sourceOptions = ["manual-upload", "intranet", "repository"];
 const horizonOptions = [
   { label: "All records", value: "all" },
@@ -52,27 +53,29 @@ const horizonOptions = [
 
 function App() {
   const dragDepthRef = useRef(0);
-  const [activeView, setActiveView] = useState<View>("overview");
+  const [activeView, setActiveView] = useState<View>("search");
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [tags, setTags] = useState("");
   const [source, setSource] = useState("manual-upload");
-  const [documentType, setDocumentType] = useState("pdf");
   const [indexingMessage, setIndexingMessage] = useState("");
   const [indexingError, setIndexingError] = useState("");
   const [isIndexing, setIsIndexing] = useState(false);
   const [processingPhase, setProcessingPhase] = useState<ProcessingPhase>({
     label: "Idle",
-    detail: "Select PDFs, then start indexing.",
+    detail: "Select PDF or DOCX files, then start indexing.",
   });
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
   const [searchMeta, setSearchMeta] = useState("");
   const [searchError, setSearchError] = useState("");
   const [isSearching, setIsSearching] = useState(false);
-  const [taxonomyFilter, setTaxonomyFilter] = useState<string[]>(["pdf"]);
+  const [selectedResult, setSelectedResult] = useState<SearchHit | null>(null);
+  const [isOpeningDesktopApp, setIsOpeningDesktopApp] = useState(false);
+  const [readerNotice, setReaderNotice] = useState("");
+  const [taxonomyFilter, setTaxonomyFilter] = useState<string[]>(["pdf", "docx"]);
   const [sourceFilter, setSourceFilter] = useState<string[]>(["manual-upload"]);
   const [horizonFilter, setHorizonFilter] = useState("all");
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
@@ -152,14 +155,14 @@ function App() {
     event.preventDefault();
 
     if (files.length === 0) {
-      setIndexingError("Select at least one PDF before indexing.");
+      setIndexingError("Select at least one PDF or DOCX before indexing.");
       return;
     }
 
     const formData = new FormData();
     const currentTags = splitTags(tags);
     const batchId = crypto.randomUUID();
-    const pendingItems = files.map((file, index) => createPendingActivity(file, currentTags, source, documentType, batchId, index));
+    const pendingItems = files.map((file, index) => createPendingActivity(file, currentTags, source, batchId, index));
 
     for (const file of files) {
       formData.append("files", file);
@@ -167,8 +170,6 @@ function App() {
 
     formData.append("tags", tags);
     formData.append("source", source);
-    formData.append("documentType", documentType);
-
     setActivityItems((previous) => [...pendingItems, ...previous]);
 
     try {
@@ -176,8 +177,8 @@ function App() {
       setIndexingError("");
       setIndexingMessage("");
       setProcessingPhase({
-        label: "PDF parsing",
-        detail: `${files.length} file(s) received. Extracting text before search indexing.`,
+        label: "Text extraction",
+        detail: `${files.length} file(s) received. Extracting text from PDF/DOCX content.`,
       });
       setActivityItems((previous) => advanceBatch(previous, pendingItems, "parsing", 35));
 
@@ -240,18 +241,18 @@ function App() {
   }
 
   function addSelectedFiles(candidateFiles: File[]) {
-    const pdfFiles = candidateFiles.filter((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"));
+    const supportedFiles = candidateFiles.filter(isSupportedUpload);
 
-    if (pdfFiles.length === 0) {
-      setIndexingError("Only PDF files are supported in this POC.");
+    if (supportedFiles.length === 0) {
+      setIndexingError("Only PDF and DOCX files are supported in this POC.");
       return;
     }
 
     setIndexingError("");
-    const nextFiles = mergeFiles(files, pdfFiles);
+    const nextFiles = mergeFiles(files, supportedFiles);
     setProcessingPhase({
       label: "Ready",
-      detail: `${nextFiles.length} PDF file(s) selected for indexing.`,
+      detail: `${nextFiles.length} supported file(s) selected for indexing.`,
     });
     setFiles(nextFiles);
   }
@@ -297,6 +298,7 @@ function App() {
     try {
       setIsSearching(true);
       setSearchError("");
+      setSelectedResult(null);
       const response = await searchDocuments(rawQuery.trim());
       setQuery(rawQuery.trim());
       setSearchResults(response.hits);
@@ -315,19 +317,41 @@ function App() {
     setter((previous) => (previous.includes(value) ? previous.filter((entry) => entry !== value) : [...previous, value]));
   }
 
+  function openResult(hit: SearchHit) {
+    setSelectedResult(hit);
+    setReaderNotice("");
+  }
+
+  async function handleOpenDesktopApp() {
+    if (!selectedResult) {
+      return;
+    }
+
+    try {
+      setIsOpeningDesktopApp(true);
+      setReaderNotice("");
+      await openDocumentInDesktopApp(selectedResult.id);
+      setReaderNotice("Opened in the desktop app. Saved changes are watched and reindexed automatically.");
+    } catch (error) {
+      setReaderNotice(error instanceof Error ? error.message : "Unable to open the original file in the desktop app.");
+    } finally {
+      setIsOpeningDesktopApp(false);
+    }
+  }
+
+  const selectedMatchCount = selectedResult ? countMatches(selectedResult.content, query) : 0;
+  const selectedPreviewUrl = selectedResult ? toApiUrl(selectedResult.previewFileUrl) : "";
+  const selectedOriginalUrl = selectedResult ? toApiUrl(selectedResult.originalFileUrl) : "";
+
   return (
     <div className="app-frame">
       <aside className="sidebar">
         <div className="brand-block">
-          <div className="brand-mark">DocuPulse</div>
-          <p>Intelligence Engine</p>
+          <div className="brand-mark">Rossignol IT KnowledgeDB</div>
+          <p>Internal search workspace</p>
         </div>
 
         <nav className="sidebar-nav">
-          <button className={navClass(activeView === "overview")} onClick={() => setActiveView("overview")} type="button">
-            <Activity size={18} />
-            <span>Dashboard</span>
-          </button>
           <button className={navClass(activeView === "search")} onClick={() => setActiveView("search")} type="button">
             <Search size={18} />
             <span>Knowledge Search</span>
@@ -380,8 +404,8 @@ function App() {
               <div className="hero-panel">
                 <h2>Intelligent Document Discovery</h2>
                 <p>
-                  A refined engine for high-velocity technical search. Index and query PDFs with a clean ingestion flow and
-                  full-text retrieval.
+                  A refined engine for high-velocity technical search. Index and query PDF/DOCX content with a clean
+                  ingestion flow and full-text retrieval.
                 </p>
 
                 <form className="hero-search" onSubmit={handleSearchSubmit}>
@@ -488,7 +512,7 @@ function App() {
 
                   <div className="table-body">
                     {activityItems.length === 0 ? (
-                      <div className="empty-line">No indexed documents yet. Upload PDFs to populate the repository.</div>
+                      <div className="empty-line">No indexed documents yet. Upload PDF or DOCX files to populate the repository.</div>
                     ) : (
                       activityItems.slice(0, 5).map((item) => (
                         <div className="table-row" key={item.id}>
@@ -514,7 +538,7 @@ function App() {
                 <Search size={20} />
                 <input
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search full text across indexed PDFs"
+                  placeholder="Search full text across indexed documents"
                   type="search"
                   value={query}
                 />
@@ -579,15 +603,36 @@ function App() {
                 </aside>
 
                 <div className="search-results">
+                  {isSearching ? (
+                    <div className="loading-card">
+                      <span className="loading-ring" />
+                      <div>
+                        <strong>Searching indexed text</strong>
+                        <p>Scanning titles, metadata, and extracted document text.</p>
+                      </div>
+                    </div>
+                  ) : null}
                   {searchError ? <div className="message-card error">{searchError}</div> : null}
-                  {filteredResults.length === 0 ? (
+                  {!isSearching && filteredResults.length === 0 ? (
                     <div className="result-card empty-card">
                       <h3>No results yet</h3>
-                      <p>Run a query after indexing a few PDFs. Filters are applied client-side on the current result set.</p>
+                      <p>Run a query after indexing a few documents. Filters are applied client-side on the current result set.</p>
                     </div>
                   ) : (
                     filteredResults.map((hit) => (
-                      <article className="result-card" key={hit.id}>
+                      <article
+                        className="result-card interactive"
+                        key={hit.id}
+                        onClick={() => openResult(hit)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openResult(hit);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                      >
                         <div className="result-card-top">
                           <div>
                             <div className="result-tag-row">
@@ -596,11 +641,10 @@ function App() {
                             </div>
                             <h3>{hit.title}</h3>
                           </div>
-                          <button className="kebab-button" type="button">
-                            <span />
-                            <span />
-                            <span />
-                          </button>
+                          <span className="open-text-label">
+                            <BookOpen size={16} />
+                            Open text
+                          </span>
                         </div>
 
                         <p className="result-snippet">{highlightSnippet(hit.snippet, query)}</p>
@@ -645,7 +689,7 @@ function App() {
                       onDrop={handleDropzoneDrop}
                     >
                       <input
-                        accept="application/pdf"
+                        accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
                         multiple
                         onChange={handleFileInputChange}
                         type="file"
@@ -653,11 +697,11 @@ function App() {
                       <div className="dropzone-icon">
                         <Upload size={28} />
                       </div>
-                      <h3>Drag and drop PDFs</h3>
+                      <h3>Drag and drop documents</h3>
                       <p>
                         or <span>browse your local files</span>
                       </p>
-                      <small>MAX 50MB - PDF</small>
+                      <small>MAX 50MB - PDF, DOCX</small>
                     </label>
 
                     <div className="dropzone-meta">
@@ -675,8 +719,9 @@ function App() {
                         <input onChange={(event) => setSource(event.target.value)} type="text" value={source} />
                       </div>
                       <div className="meta-field">
-                        <span>Document type</span>
-                        <input onChange={(event) => setDocumentType(event.target.value)} type="text" value={documentType} />
+                        <span>Accepted types</span>
+                        <strong>PDF, DOCX</strong>
+                        <small>Type is detected automatically per file.</small>
                       </div>
                     </div>
 
@@ -703,9 +748,19 @@ function App() {
                     <div className="dropzone-actions">
                       <button className="primary-button" disabled={isIndexing} type="submit">
                         {isIndexing ? <LoaderCircle className="spin" size={16} /> : <FileSearch size={16} />}
-                        {isIndexing ? "Indexing..." : "Index selected PDFs"}
+                        {isIndexing ? "Indexing..." : "Index selected files"}
                       </button>
                     </div>
+
+                    {isIndexing ? (
+                      <div className="loading-card compact">
+                        <span className="loading-ring" />
+                        <div>
+                          <strong>{processingPhase.label}</strong>
+                          <p>{processingPhase.detail}</p>
+                        </div>
+                      </div>
+                    ) : null}
 
                     {indexingMessage ? <div className="message-card success">{indexingMessage}</div> : null}
                     {indexingError ? <div className="message-card error">{indexingError}</div> : null}
@@ -769,7 +824,10 @@ function App() {
                   </div>
 
                   <div className="queue-ring">
-                    <div className="ring-shell" style={{ ["--ring-angle" as string]: `${Math.round(queueProgress * 3.6)}` }}>
+                    <div
+                      className={isIndexing ? "ring-shell is-processing" : "ring-shell"}
+                      style={{ ["--ring-angle" as string]: `${Math.round(queueProgress * 3.6)}` }}
+                    >
                       <div className="ring-core">
                         <strong>{queueProgress}%</strong>
                         <span>Processed</span>
@@ -780,7 +838,7 @@ function App() {
                   <div className="queue-bars">
                     <div>
                       <div className="queue-labels">
-                        <span>PDF parsing</span>
+                        <span>Text extraction</span>
                         <strong>{parsedCount} / {totalDocuments}</strong>
                       </div>
                       <div className="progress-track slim">
@@ -804,8 +862,8 @@ function App() {
                     ) : null}
                   </div>
 
-                  <button className="ghost-button full-width" onClick={() => setActiveView("overview")} type="button">
-                    View system logs
+                  <button className="ghost-button full-width" onClick={() => setActiveView("search")} type="button">
+                    Open search
                   </button>
 
                   {latestActivity ? (
@@ -819,6 +877,110 @@ function App() {
             </section>
           ) : null}
         </main>
+
+        {selectedResult ? (
+          <section className="document-reader" aria-label="Document text reader">
+            <div className="reader-backdrop" onClick={() => setSelectedResult(null)} />
+            <article className="reader-panel">
+              <header className="reader-header">
+                <div className="reader-title-block">
+                  <div className="reader-title-icon">
+                    <FileText size={22} />
+                  </div>
+                  <div>
+                    <div className="result-tag-row">
+                      <span className="tone-tag">{selectedResult.documentType.toUpperCase()}</span>
+                      <span className="result-ref">Ref: {selectedResult.id.slice(0, 8)}</span>
+                    </div>
+                    <h2>{selectedResult.title}</h2>
+                    <p>{selectedResult.fileName}</p>
+                  </div>
+                </div>
+                <button aria-label="Close document reader" className="icon-button" onClick={() => setSelectedResult(null)} type="button">
+                  <X size={20} />
+                </button>
+              </header>
+
+              <div className="reader-toolbar">
+                <div className="reader-toolbar-meta">
+                  <div className="reader-query">
+                    <Search size={16} />
+                    <span>{query ? `Current query: "${query}"` : "No active query"}</span>
+                  </div>
+                  <div className="reader-stat">
+                    <strong>{selectedMatchCount}</strong>
+                    <span>{selectedMatchCount === 1 ? "match" : "matches"}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="reader-content-shell">
+                <main className="reader-document">
+                  {selectedPreviewUrl ? (
+                    <iframe className="original-frame" src={selectedPreviewUrl} title={`Original preview for ${selectedResult.fileName}`} />
+                  ) : (
+                    <div className="original-unavailable">
+                      <FileText size={34} />
+                      <h3>Original file not stored for this result</h3>
+                      <p>
+                        This document was indexed before original-file storage was added. Reupload it from Ingestion and the
+                        original preview will open here.
+                      </p>
+                      <button className="primary-button" onClick={() => setActiveView("ingestion")} type="button">
+                        <Upload size={16} />
+                        Reupload file
+                      </button>
+                    </div>
+                  )}
+                </main>
+
+                <aside className="reader-sidepanel">
+                  <div>
+                    <span>Preview mode</span>
+                    <strong>{selectedPreviewUrl ? "Original file" : "Unavailable"}</strong>
+                  </div>
+                  <div>
+                    <span>Uploaded</span>
+                    <strong>{new Date(selectedResult.uploadedAt).toLocaleString()}</strong>
+                  </div>
+                  <div>
+                    <span>Source</span>
+                    <strong>{selectedResult.source}</strong>
+                  </div>
+                  <div>
+                    <span>Characters</span>
+                    <strong>{formatCount(selectedResult.content.length)}</strong>
+                  </div>
+                  {selectedOriginalUrl ? (
+                    <button className="reader-action-button" disabled={isOpeningDesktopApp} onClick={() => void handleOpenDesktopApp()} type="button">
+                      {isOpeningDesktopApp ? "Opening..." : "Open in desktop app"}
+                    </button>
+                  ) : null}
+                  {selectedOriginalUrl ? (
+                    <a className="reader-file-link" href={selectedOriginalUrl} target="_blank" rel="noreferrer">
+                      Open in new tab
+                    </a>
+                  ) : null}
+                  {readerNotice ? <p className="reader-notice">{readerNotice}</p> : null}
+                  <div>
+                    <span>Tags</span>
+                    <div className="reader-tag-list">
+                      {selectedResult.tags.length > 0 ? (
+                        selectedResult.tags.map((tag) => (
+                          <span className="doc-pill" key={`${selectedResult.id}-${tag}`}>
+                            {tag}
+                          </span>
+                        ))
+                      ) : (
+                        <strong>No tags</strong>
+                      )}
+                    </div>
+                  </div>
+                </aside>
+              </div>
+            </article>
+          </section>
+        ) : null}
       </div>
     </div>
   );
@@ -858,8 +1020,12 @@ function relativeTime(value: string): string {
 }
 
 function highlightSnippet(snippet: string, query: string) {
+  return highlightText(snippet, query);
+}
+
+function highlightText(text: string, query: string) {
   if (!query.trim()) {
-    return snippet;
+    return text;
   }
 
   const terms = query
@@ -868,11 +1034,11 @@ function highlightSnippet(snippet: string, query: string) {
     .filter(Boolean);
 
   if (terms.length === 0) {
-    return snippet;
+    return text;
   }
 
   const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
-  const pieces = snippet.split(pattern);
+  const pieces = text.split(pattern);
 
   return pieces.map((piece, index) =>
     terms.some((term) => piece.toLowerCase() === term.toLowerCase()) ? (
@@ -883,21 +1049,70 @@ function highlightSnippet(snippet: string, query: string) {
   );
 }
 
+function countMatches(text: string, query: string): number {
+  const terms = query
+    .trim()
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+
+  if (terms.length === 0) {
+    return 0;
+  }
+
+  const pattern = new RegExp(terms.map(escapeRegExp).join("|"), "gi");
+  return text.match(pattern)?.length ?? 0;
+}
+
+function cleanupExtractedText(content: string): string {
+  return content
+    .replace(/\s+/g, " ")
+    .replace(/([A-Za-zÀ-ÖØ-öø-ÿ])(\d)/g, "$1 $2")
+    .replace(/(\d)([A-Za-zÀ-ÖØ-öø-ÿ])/g, "$1 $2")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/([,.;:!?])([^\s])/g, "$1 $2")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function splitLongParagraph(paragraph: string): string[] {
+  const parts: string[] = [];
+
+  for (let start = 0; start < paragraph.length; start += 420) {
+    const end = Math.min(paragraph.length, start + 520);
+    const slice = paragraph.slice(start, end);
+    const lastSpace = slice.lastIndexOf(" ");
+
+    if (end < paragraph.length && lastSpace > 240) {
+      parts.push(slice.slice(0, lastSpace).trim());
+      start += lastSpace - 420;
+    } else {
+      parts.push(slice.trim());
+    }
+  }
+
+  return parts.filter(Boolean);
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+void cleanupExtractedText;
+void splitLongParagraph;
 
 function createPendingActivity(
   file: File,
   tags: string[],
   source: string,
-  documentType: string,
   batchId: string,
   index: number,
 ): ActivityItem {
+  const documentType = documentTypeFromFile(file.name);
+
   return {
     id: `pending-${batchId}-${index}`,
-    title: file.name.replace(/\.pdf$/i, ""),
+    title: file.name.replace(/\.(pdf|docx)$/i, ""),
     fileName: file.name,
     contentLength: 0,
     sizeLabel: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
@@ -908,6 +1123,20 @@ function createPendingActivity(
     uploadedAt: new Date().toISOString(),
     source,
   };
+}
+
+function isSupportedUpload(file: File): boolean {
+  return documentTypeFromFile(file.name) !== "file";
+}
+
+function documentTypeFromFile(fileName: string): string {
+  const extension = fileName.split(".").pop()?.toLowerCase();
+
+  if (extension === "pdf" || extension === "docx") {
+    return extension;
+  }
+
+  return "file";
 }
 
 function advanceBatch(
@@ -1013,10 +1242,6 @@ function navClass(isActive: boolean): string {
 }
 
 function viewTitle(view: View): string {
-  if (view === "overview") {
-    return "Overview";
-  }
-
   if (view === "search") {
     return "Knowledge Search";
   }
