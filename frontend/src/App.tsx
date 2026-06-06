@@ -48,8 +48,6 @@ type ProcessingPhase = {
 };
 
 const quickSuggestions = ["api_specs_2024", "network_topology", "security_audit"];
-const taxonomyOptions = ["pdf", "docx"];
-const sourceOptions = ["manual-upload", "intranet", "repository"];
 const defaultApplications = ["M3", "Y2", "SFCC"];
 const documentCategoryOptions = [
   { value: "configuration", label: "Configuration" },
@@ -59,11 +57,6 @@ const documentCategoryOptions = [
 ];
 const programmingLanguageOptions = ["Java", "JavaScript", "TypeScript", "SQL", "Python", "C#", "Apex", "XML", "PHP"];
 const applicationStorageKey = "rossignol-applications";
-const horizonOptions = [
-  { label: "All records", value: "all" },
-  { label: "Last 24h", value: "24h" },
-  { label: "Last 30d", value: "30d" },
-];
 
 function App() {
   const dragDepthRef = useRef(0);
@@ -94,9 +87,9 @@ function App() {
   const [selectedResult, setSelectedResult] = useState<SearchHit | null>(null);
   const [isOpeningDesktopApp, setIsOpeningDesktopApp] = useState(false);
   const [readerNotice, setReaderNotice] = useState("");
-  const [taxonomyFilter, setTaxonomyFilter] = useState<string[]>(["pdf", "docx"]);
-  const [sourceFilter, setSourceFilter] = useState<string[]>(["manual-upload"]);
-  const [horizonFilter, setHorizonFilter] = useState("all");
+  const [applicationFilter, setApplicationFilter] = useState<string[]>([]);
+  const [documentTypeFilter, setDocumentTypeFilter] = useState<string[]>([]);
+  const [programmingLanguageFilter, setProgrammingLanguageFilter] = useState<string[]>([]);
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
 
   useEffect(() => {
@@ -132,15 +125,41 @@ function App() {
   const parsedCount = activityItems.filter((item) => ["indexing", "indexed"].includes(item.status)).length;
   const failedCount = activityItems.filter((item) => item.status === "failed").length;
 
+  const availableApplicationFilters = useMemo(
+    () =>
+      Array.from(new Set(searchResults.flatMap((hit) => hit.applicationNames)))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right)),
+    [searchResults],
+  );
+  const availableDocumentTypeFilters = useMemo(
+    () =>
+      Array.from(new Set(searchResults.map((hit) => hit.documentCategory).filter(Boolean) as string[])).sort((left, right) =>
+        formatCategoryLabel(left).localeCompare(formatCategoryLabel(right)),
+      ),
+    [searchResults],
+  );
+  const availableProgrammingLanguageFilters = useMemo(
+    () =>
+      Array.from(new Set(searchResults.flatMap((hit) => hit.programmingLanguages)))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right)),
+    [searchResults],
+  );
+
   const filteredResults = useMemo(() => {
     return searchResults.filter((hit) => {
-      const typeMatch = taxonomyFilter.length === 0 || taxonomyFilter.includes(hit.documentType.toLowerCase());
-      const sourceMatch = sourceFilter.length === 0 || sourceFilter.includes(hit.source.toLowerCase());
-      const horizonMatch = matchesHorizon(hit.uploadedAt, horizonFilter);
+      const applicationMatch =
+        applicationFilter.length === 0 || hit.applicationNames.some((application) => applicationFilter.includes(application));
+      const documentTypeMatch =
+        documentTypeFilter.length === 0 || (hit.documentCategory ? documentTypeFilter.includes(hit.documentCategory) : false);
+      const programmingLanguageMatch =
+        programmingLanguageFilter.length === 0 ||
+        hit.programmingLanguages.some((language) => programmingLanguageFilter.includes(language));
 
-      return typeMatch && sourceMatch && horizonMatch;
+      return applicationMatch && documentTypeMatch && programmingLanguageMatch;
     });
-  }, [horizonFilter, searchResults, sourceFilter, taxonomyFilter]);
+  }, [applicationFilter, documentTypeFilter, programmingLanguageFilter, searchResults]);
 
   const queueActiveCount = activityItems.filter((item) => ["queued", "parsing", "indexing"].includes(item.status)).length;
 
@@ -610,47 +629,48 @@ function App() {
               <div className="search-layout">
                 <aside className="filter-rail">
                   <section>
-                    <h3>Taxonomy</h3>
-                    {taxonomyOptions.map((option) => (
+                    <h3>Applications</h3>
+                    {availableApplicationFilters.length === 0 ? <p className="filter-empty">No app metadata in current results.</p> : null}
+                    {availableApplicationFilters.map((option) => (
                       <label className="check-row" key={option}>
                         <input
-                          checked={taxonomyFilter.includes(option)}
-                          onChange={() => toggleSelection(option, setTaxonomyFilter)}
+                          checked={applicationFilter.includes(option)}
+                          onChange={() => toggleSelection(option, setApplicationFilter)}
                           type="checkbox"
                         />
-                        <span>{option.toUpperCase()}</span>
+                        <span>{option}</span>
                       </label>
                     ))}
                   </section>
 
                   <section>
-                    <h3>Origin</h3>
-                    {sourceOptions.map((option) => (
+                    <h3>Type</h3>
+                    {availableDocumentTypeFilters.length === 0 ? <p className="filter-empty">No document types in current results.</p> : null}
+                    {availableDocumentTypeFilters.map((option) => (
                       <label className="check-row" key={option}>
                         <input
-                          checked={sourceFilter.includes(option)}
-                          onChange={() => toggleSelection(option, setSourceFilter)}
+                          checked={documentTypeFilter.includes(option)}
+                          onChange={() => toggleSelection(option, setDocumentTypeFilter)}
                           type="checkbox"
                         />
-                        <span>{option.replace("-", " ").toUpperCase()}</span>
+                        <span>{formatCategoryLabel(option)}</span>
                       </label>
                     ))}
                   </section>
 
                   <section>
-                    <h3>Horizon</h3>
-                    <div className="horizon-list">
-                      {horizonOptions.map((option) => (
-                        <button
-                          className={horizonFilter === option.value ? "horizon-button active" : "horizon-button"}
-                          key={option.value}
-                          onClick={() => setHorizonFilter(option.value)}
-                          type="button"
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
+                    <h3>Programming Languages</h3>
+                    {availableProgrammingLanguageFilters.length === 0 ? <p className="filter-empty">No language metadata in current results.</p> : null}
+                    {availableProgrammingLanguageFilters.map((option) => (
+                      <label className="check-row" key={option}>
+                        <input
+                          checked={programmingLanguageFilter.includes(option)}
+                          onChange={() => toggleSelection(option, setProgrammingLanguageFilter)}
+                          type="checkbox"
+                        />
+                        <span>{option}</span>
+                      </label>
+                    ))}
                   </section>
                 </aside>
 
@@ -1450,24 +1470,6 @@ function waitForUiFrame(): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, 120);
   });
-}
-
-function matchesHorizon(uploadedAt: string, horizon: string): boolean {
-  if (horizon === "all") {
-    return true;
-  }
-
-  const delta = Date.now() - new Date(uploadedAt).getTime();
-
-  if (horizon === "24h") {
-    return delta <= 24 * 60 * 60 * 1000;
-  }
-
-  if (horizon === "30d") {
-    return delta <= 30 * 24 * 60 * 60 * 1000;
-  }
-
-  return true;
 }
 
 function navClass(isActive: boolean): string {

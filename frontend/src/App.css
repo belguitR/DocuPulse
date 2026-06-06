@@ -608,24 +608,11 @@
   accent-color: #12100f;
 }
 
-.horizon-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.horizon-button {
-  justify-content: flex-start;
-  padding: 14px 16px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: #1d1813;
-  text-align: left;
-}
-
-.horizon-button.active {
-  background: #12100f;
-  color: #f8f6f1;
+.filter-empty {
+  margin: 0;
+  color: #7a6c5e;
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .search-results {
