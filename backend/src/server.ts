@@ -56,11 +56,26 @@ app.post("/api/documents/index", upload.array("files"), async (req, res) => {
     return;
   }
 
+  if (files.length > 1) {
+    res.status(400).json({ error: "Upload one file at a time for this workflow." });
+    return;
+  }
+
   try {
     await ensureIndexReady();
     await mkdir(uploadsDir, { recursive: true });
 
     const tags = parseTags(typeof req.body.tags === "string" ? req.body.tags : undefined);
+    const applicationNames = parseTags(
+      typeof req.body.applicationNames === "string" ? req.body.applicationNames : undefined,
+    );
+    const documentCategory =
+      typeof req.body.documentCategory === "string" && req.body.documentCategory.trim()
+        ? req.body.documentCategory.trim()
+        : "general-reference";
+    const programmingLanguages = parseTags(
+      typeof req.body.programmingLanguages === "string" ? req.body.programmingLanguages : undefined,
+    );
     const source = typeof req.body.source === "string" && req.body.source.trim() ? req.body.source.trim() : "manual-upload";
     const documents: IndexedDocument[] = [];
     const unsupportedFiles: string[] = [];
@@ -90,6 +105,9 @@ app.post("/api/documents/index", upload.array("files"), async (req, res) => {
         fileName,
         content,
         contentSearch: buildSearchText(content),
+        applicationNames,
+        documentCategory,
+        programmingLanguages,
         storedFileName,
         mimeType: mimeTypeForDocument(documentType),
         originalFileUrl: `/api/files/${id}/original`,
@@ -123,6 +141,9 @@ app.post("/api/documents/index", upload.array("files"), async (req, res) => {
         title: document.title,
         fileName: document.fileName,
         contentLength: document.content.length,
+        applicationNames: document.applicationNames ?? [],
+        documentCategory: document.documentCategory,
+        programmingLanguages: document.programmingLanguages ?? [],
         originalFileUrl: document.originalFileUrl,
         previewFileUrl: document.previewFileUrl,
       })),
@@ -146,6 +167,9 @@ app.get("/api/documents", async (_req, res) => {
         "title",
         "fileName",
         "content",
+        "applicationNames",
+        "documentCategory",
+        "programmingLanguages",
         "storedFileName",
         "mimeType",
         "originalFileUrl",
@@ -165,6 +189,9 @@ app.get("/api/documents", async (_req, res) => {
           title: normalizeFileName(document.title),
           fileName: normalizeFileName(document.fileName),
           contentLength: document.content?.length ?? 0,
+          applicationNames: document.applicationNames ?? [],
+          documentCategory: document.documentCategory,
+          programmingLanguages: document.programmingLanguages ?? [],
           originalFileUrl: document.originalFileUrl,
           previewFileUrl: document.previewFileUrl,
           mimeType: document.mimeType,
@@ -211,6 +238,9 @@ app.get("/api/search", async (req, res) => {
           title: normalizeFileName(hit.title),
           fileName: normalizeFileName(hit.fileName),
           content: hit.content,
+          applicationNames: hit.applicationNames ?? [],
+          documentCategory: hit.documentCategory,
+          programmingLanguages: hit.programmingLanguages ?? [],
           storedFileName: hit.storedFileName,
           mimeType: hit.mimeType,
           originalFileUrl: hit.originalFileUrl,
@@ -225,10 +255,12 @@ app.get("/api/search", async (req, res) => {
         return result;
       });
 
+    const fallbackHits = await findMetadataMatches(index, parsedQuery.data.q, hits.map((hit) => hit.id));
+
     res.json({
       query: parsedQuery.data.q,
-      estimatedTotalHits: hits.length,
-      hits,
+      estimatedTotalHits: hits.length + fallbackHits.length,
+      hits: [...hits, ...fallbackHits],
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown search error";
@@ -327,6 +359,75 @@ function normalizeFileName(value: string): string {
   return Buffer.from(value, "latin1").toString("utf8");
 }
 
+async function findMetadataMatches(
+  index: ReturnType<typeof meiliClient.index<IndexedDocument>>,
+  query: string,
+  excludedIds: string[],
+): Promise<SearchResult[]> {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const response = await index.getDocuments({
+    limit: 1000,
+    fields: [
+      "id",
+      "title",
+      "fileName",
+      "content",
+      "applicationNames",
+      "documentCategory",
+      "programmingLanguages",
+      "storedFileName",
+      "mimeType",
+      "originalFileUrl",
+      "previewFileUrl",
+      "tags",
+      "uploadedAt",
+      "documentType",
+      "source",
+    ],
+  });
+  const excluded = new Set(excludedIds);
+
+  return response.results
+    .filter((document) => {
+      if (!document.id || !document.title || !document.fileName || !document.content || excluded.has(document.id)) {
+        return false;
+      }
+
+      const metadataFields = [
+        ...(document.applicationNames ?? []),
+        document.documentCategory,
+        document.source,
+        ...(document.programmingLanguages ?? []),
+        ...(document.tags ?? []),
+      ];
+
+      return metadataFields.some((value) => value?.toLowerCase().includes(normalizedQuery));
+    })
+    .map((document) => ({
+      id: document.id,
+      title: normalizeFileName(document.title),
+      fileName: normalizeFileName(document.fileName),
+      content: document.content,
+      applicationNames: document.applicationNames ?? [],
+      documentCategory: document.documentCategory,
+      programmingLanguages: document.programmingLanguages ?? [],
+      storedFileName: document.storedFileName,
+      mimeType: document.mimeType,
+      originalFileUrl: document.originalFileUrl,
+      previewFileUrl: document.previewFileUrl,
+      tags: document.tags ?? [],
+      uploadedAt: document.uploadedAt,
+      documentType: document.documentType ?? "pdf",
+      source: document.source ?? "manual-upload",
+      snippet: buildSnippet(document.content, query),
+    }));
+}
+
 function documentTypeFromFile(fileName: string, mimeType: string): "pdf" | "docx" | null {
   const extension = path.extname(fileName).toLowerCase();
 
@@ -372,6 +473,9 @@ async function findDocumentForFile(id: string): Promise<IndexedDocument | null> 
         "title",
         "fileName",
         "content",
+        "applicationNames",
+        "documentCategory",
+        "programmingLanguages",
         "storedFileName",
         "mimeType",
         "uploadedAt",
@@ -513,6 +617,9 @@ async function reindexStoredDocument(documentId: string): Promise<void> {
       fileName: document.fileName,
       content,
       contentSearch: buildSearchText(content),
+      applicationNames: document.applicationNames ?? [],
+      documentCategory: document.documentCategory,
+      programmingLanguages: document.programmingLanguages ?? [],
       storedFileName: document.storedFileName,
       mimeType: document.mimeType,
       originalFileUrl: `/api/files/${document.id}/original`,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
+  Braces,
   CalendarDays,
   CheckCircle2,
   Clock3,
@@ -15,6 +16,7 @@ import {
   Server,
   Settings2,
   Upload,
+  Plus,
   X,
 } from "lucide-react";
 import "./App.css";
@@ -35,6 +37,9 @@ type ActivityItem = {
   progress: number;
   uploadedAt: string;
   source: string;
+  applicationNames: string[];
+  documentCategory: string;
+  programmingLanguages: string[];
 };
 
 type ProcessingPhase = {
@@ -45,6 +50,15 @@ type ProcessingPhase = {
 const quickSuggestions = ["api_specs_2024", "network_topology", "security_audit"];
 const taxonomyOptions = ["pdf", "docx"];
 const sourceOptions = ["manual-upload", "intranet", "repository"];
+const defaultApplications = ["M3", "Y2", "SFCC"];
+const documentCategoryOptions = [
+  { value: "configuration", label: "Configuration" },
+  { value: "training", label: "Formation" },
+  { value: "support-procedure", label: "Support procedure" },
+  { value: "general-reference", label: "General reference" },
+];
+const programmingLanguageOptions = ["Java", "JavaScript", "TypeScript", "SQL", "Python", "C#", "Apex", "XML", "PHP"];
+const applicationStorageKey = "rossignol-applications";
 const horizonOptions = [
   { label: "All records", value: "all" },
   { label: "Last 24h", value: "24h" },
@@ -59,6 +73,11 @@ function App() {
   const [files, setFiles] = useState<File[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [tags, setTags] = useState("");
+  const [applications, setApplications] = useState<string[]>(() => loadStoredApplications());
+  const [selectedApplications, setSelectedApplications] = useState<string[]>(() => [loadStoredApplications()[0] ?? defaultApplications[0]]);
+  const [newApplicationName, setNewApplicationName] = useState("");
+  const [documentCategory, setDocumentCategory] = useState(documentCategoryOptions[0].value);
+  const [programmingLanguages, setProgrammingLanguages] = useState<string[]>([]);
   const [source, setSource] = useState("manual-upload");
   const [indexingMessage, setIndexingMessage] = useState("");
   const [indexingError, setIndexingError] = useState("");
@@ -85,16 +104,20 @@ function App() {
     void loadDocuments();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(applicationStorageKey, JSON.stringify(applications));
+  }, [applications]);
+
   const selectedFilesLabel = useMemo(() => {
     if (files.length === 0) {
-      return "No files selected";
+      return "No file selected";
     }
 
-    if (files.length === 1) {
-      return files[0].name;
-    }
-
-    return `${files.length} files selected`;
+    return files[0].name;
   }, [files]);
 
   const indexedCount = activityItems.filter((item) => item.status === "indexed").length;
@@ -162,13 +185,18 @@ function App() {
     const formData = new FormData();
     const currentTags = splitTags(tags);
     const batchId = crypto.randomUUID();
-    const pendingItems = files.map((file, index) => createPendingActivity(file, currentTags, source, batchId, index));
+    const pendingItems = files.map((file, index) =>
+      createPendingActivity(file, currentTags, source, selectedApplications, documentCategory, programmingLanguages, batchId, index),
+    );
 
     for (const file of files) {
       formData.append("files", file);
     }
 
     formData.append("tags", tags);
+    formData.append("applicationNames", selectedApplications.join(", "));
+    formData.append("documentCategory", documentCategory);
+    formData.append("programmingLanguages", programmingLanguages.join(", "));
     formData.append("source", source);
     setActivityItems((previous) => [...pendingItems, ...previous]);
 
@@ -214,6 +242,9 @@ function App() {
       );
 
       setFiles([]);
+      setTags("");
+      setSelectedApplications([applications[0] ?? defaultApplications[0]]);
+      setProgrammingLanguages([]);
       setProcessingPhase({
         label: "Complete",
         detail: `${response.indexedCount} document(s) are searchable now.`,
@@ -248,11 +279,17 @@ function App() {
       return;
     }
 
-    setIndexingError("");
-    const nextFiles = mergeFiles(files, supportedFiles);
+    if (supportedFiles.length > 1) {
+      setIndexingError("Upload one file at a time. The metadata applies to a single document.");
+    }
+
+    if (supportedFiles.length === 1) {
+      setIndexingError("");
+    }
+    const nextFiles = [supportedFiles[0]];
     setProcessingPhase({
       label: "Ready",
-      detail: `${nextFiles.length} supported file(s) selected for indexing.`,
+      detail: `${nextFiles[0].name} is ready for indexing.`,
     });
     setFiles(nextFiles);
   }
@@ -315,6 +352,21 @@ function App() {
 
   function toggleSelection(value: string, setter: React.Dispatch<React.SetStateAction<string[]>>) {
     setter((previous) => (previous.includes(value) ? previous.filter((entry) => entry !== value) : [...previous, value]));
+  }
+
+  function addApplication() {
+    const normalized = newApplicationName.trim();
+
+    if (!normalized) {
+      return;
+    }
+
+    setApplications((previous) => {
+      const next = previous.includes(normalized) ? previous : [...previous, normalized].sort((left, right) => left.localeCompare(right));
+      return next;
+    });
+    setSelectedApplications((previous) => (previous.includes(normalized) ? previous : [...previous, normalized]));
+    setNewApplicationName("");
   }
 
   function openResult(hit: SearchHit) {
@@ -637,6 +689,19 @@ function App() {
                           <div>
                             <div className="result-tag-row">
                               <span className="tone-tag">{hit.documentType.toUpperCase()}</span>
+                              {hit.applicationNames.map((application) => (
+                                <span className={metadataPillClass("application")} key={`${hit.id}-${application}`}>
+                                  {application}
+                                </span>
+                              ))}
+                              {hit.documentCategory ? (
+                                <span className={metadataPillClass("category")}>{formatCategoryLabel(hit.documentCategory)}</span>
+                              ) : null}
+                              {hit.programmingLanguages.map((language) => (
+                                <span className={metadataPillClass("language")} key={`${hit.id}-${language}`}>
+                                  {language}
+                                </span>
+                              ))}
                               <span className="result-ref">Ref: {hit.id.slice(0, 8)}</span>
                             </div>
                             <h3>{hit.title}</h3>
@@ -690,7 +755,6 @@ function App() {
                     >
                       <input
                         accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
-                        multiple
                         onChange={handleFileInputChange}
                         type="file"
                       />
@@ -715,13 +779,88 @@ function App() {
                         <small>{processingPhase.detail}</small>
                       </div>
                       <div className="meta-field">
-                        <span>Source</span>
-                        <input onChange={(event) => setSource(event.target.value)} type="text" value={source} />
+                        <span>Applications</span>
+                        <strong>{selectedApplications.length > 0 ? selectedApplications.join(", ") : "No app selected"}</strong>
+                        <small>Select one or more application scopes below.</small>
                       </div>
                       <div className="meta-field">
                         <span>Accepted types</span>
                         <strong>PDF, DOCX</strong>
                         <small>Type is detected automatically per file.</small>
+                      </div>
+                    </div>
+
+                    <div className="metadata-grid">
+                      <div className="tag-panel">
+                        <div className="card-header">
+                          <h3>Application binding</h3>
+                        </div>
+                        <div className="application-create">
+                          <input
+                            onChange={(event) => setNewApplicationName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                addApplication();
+                              }
+                            }}
+                            placeholder="Add a new application code"
+                            type="text"
+                            value={newApplicationName}
+                          />
+                          <button className="ghost-button" onClick={addApplication} type="button">
+                            <Plus size={16} />
+                            Add app
+                          </button>
+                        </div>
+                        <div className="application-pill-list">
+                          {applications.map((application) => (
+                            <button
+                              className={selectedApplications.includes(application) ? "choice-pill active" : "choice-pill"}
+                              key={application}
+                              onClick={() => toggleSelection(application, setSelectedApplications)}
+                              type="button"
+                            >
+                              {application}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="tag-panel">
+                        <div className="card-header">
+                          <h3>Document classification</h3>
+                        </div>
+                        <div className="choice-pill-list">
+                          {documentCategoryOptions.map((option) => (
+                            <button
+                              className={documentCategory === option.value ? "choice-pill active" : "choice-pill"}
+                              key={option.value}
+                              onClick={() => setDocumentCategory(option.value)}
+                              type="button"
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="tag-panel">
+                      <div className="card-header">
+                        <h3>Programming languages</h3>
+                      </div>
+                      <div className="language-grid">
+                        {programmingLanguageOptions.map((language) => (
+                          <label className="check-row compact" key={language}>
+                            <input
+                              checked={programmingLanguages.includes(language)}
+                              onChange={() => toggleSelection(language, setProgrammingLanguages)}
+                              type="checkbox"
+                            />
+                            <span>{language}</span>
+                          </label>
+                        ))}
                       </div>
                     </div>
 
@@ -745,10 +884,42 @@ function App() {
                       </div>
                     </div>
 
+                    <div className="tag-panel metadata-summary">
+                      <div className="card-header">
+                        <h3>Indexing profile</h3>
+                      </div>
+                      <div className="summary-chip-list">
+                        {selectedApplications.length > 0 ? (
+                          selectedApplications.map((application) => (
+                            <span className={metadataPillClass("application")} key={application}>
+                              {application}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="tag-placeholder">No application selected</span>
+                        )}
+                        <span className={metadataPillClass("category")}>{formatCategoryLabel(documentCategory)}</span>
+                        {programmingLanguages.length > 0 ? (
+                          programmingLanguages.map((language) => (
+                            <span className={metadataPillClass("language")} key={language}>
+                              <Braces size={12} />
+                              {language}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="tag-placeholder">No language selected</span>
+                        )}
+                      </div>
+                      <div className="source-row">
+                        <span>Source</span>
+                        <input onChange={(event) => setSource(event.target.value)} type="text" value={source} />
+                      </div>
+                    </div>
+
                     <div className="dropzone-actions">
                       <button className="primary-button" disabled={isIndexing} type="submit">
                         {isIndexing ? <LoaderCircle className="spin" size={16} /> : <FileSearch size={16} />}
-                        {isIndexing ? "Indexing..." : "Index selected files"}
+                        {isIndexing ? "Indexing..." : "Index file"}
                       </button>
                     </div>
 
@@ -798,6 +969,17 @@ function App() {
                             </div>
                             <div className="activity-tags">
                               <span className={`status-token status-${item.status}`}>{statusLabel(item.status)}</span>
+                              {item.applicationNames.map((application) => (
+                                <span className={metadataPillClass("application")} key={`${item.id}-${application}`}>
+                                  {application}
+                                </span>
+                              ))}
+                              <span className={metadataPillClass("category")}>{formatCategoryLabel(item.documentCategory)}</span>
+                              {item.programmingLanguages.map((language) => (
+                                <span className={metadataPillClass("language")} key={`${item.id}-${language}`}>
+                                  {language}
+                                </span>
+                              ))}
                               {item.tags.map((tag) => (
                                 <span className="doc-pill" key={`${item.id}-${tag}`}>
                                   {tag}
@@ -944,12 +1126,44 @@ function App() {
                     <strong>{new Date(selectedResult.uploadedAt).toLocaleString()}</strong>
                   </div>
                   <div>
+                    <span>Applications</span>
+                    <div className="reader-tag-list">
+                      {selectedResult.applicationNames.length > 0 ? (
+                        selectedResult.applicationNames.map((application) => (
+                          <span className={metadataPillClass("application")} key={`${selectedResult.id}-${application}`}>
+                            {application}
+                          </span>
+                        ))
+                      ) : (
+                        <strong>Unassigned</strong>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <span>Document class</span>
+                    <strong>{formatCategoryLabel(selectedResult.documentCategory ?? "general-reference")}</strong>
+                  </div>
+                  <div>
                     <span>Source</span>
                     <strong>{selectedResult.source}</strong>
                   </div>
                   <div>
                     <span>Characters</span>
                     <strong>{formatCount(selectedResult.content.length)}</strong>
+                  </div>
+                  <div>
+                    <span>Languages</span>
+                    <div className="reader-tag-list">
+                      {selectedResult.programmingLanguages.length > 0 ? (
+                        selectedResult.programmingLanguages.map((language) => (
+                          <span className={metadataPillClass("language")} key={`${selectedResult.id}-${language}`}>
+                            {language}
+                          </span>
+                        ))
+                      ) : (
+                        <strong>No language tags</strong>
+                      )}
+                    </div>
                   </div>
                   {selectedOriginalUrl ? (
                     <button className="reader-action-button" disabled={isOpeningDesktopApp} onClick={() => void handleOpenDesktopApp()} type="button">
@@ -1105,6 +1319,9 @@ function createPendingActivity(
   file: File,
   tags: string[],
   source: string,
+  applicationNames: string[],
+  documentCategory: string,
+  programmingLanguages: string[],
   batchId: string,
   index: number,
 ): ActivityItem {
@@ -1122,6 +1339,9 @@ function createPendingActivity(
     progress: 8,
     uploadedAt: new Date().toISOString(),
     source,
+    applicationNames,
+    documentCategory,
+    programmingLanguages,
   };
 }
 
@@ -1191,32 +1411,45 @@ function documentToActivity(document: DocumentSummary): ActivityItem {
     progress: 100,
     uploadedAt: document.uploadedAt,
     source: document.source,
+    applicationNames: document.applicationNames ?? [],
+    documentCategory: document.documentCategory ?? "general-reference",
+    programmingLanguages: document.programmingLanguages ?? [],
   };
+}
+
+function formatCategoryLabel(value: string): string {
+  const option = documentCategoryOptions.find((entry) => entry.value === value);
+  return option?.label ?? value.replace(/-/g, " ");
+}
+
+function metadataPillClass(kind: "application" | "category" | "language"): string {
+  return `doc-pill metadata-pill ${kind}-pill`;
+}
+
+function loadStoredApplications(): string[] {
+  if (typeof window === "undefined") {
+    return defaultApplications;
+  }
+
+  const storedApplications = window.localStorage.getItem(applicationStorageKey);
+
+  if (!storedApplications) {
+    return defaultApplications;
+  }
+
+  try {
+    const parsed = JSON.parse(storedApplications) as string[];
+    const sanitized = Array.from(new Set(parsed.map((entry) => entry.trim()).filter(Boolean)));
+    return sanitized.length > 0 ? sanitized : defaultApplications;
+  } catch {
+    return defaultApplications;
+  }
 }
 
 function waitForUiFrame(): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, 120);
   });
-}
-
-function mergeFiles(existingFiles: File[], incomingFiles: File[]): File[] {
-  const mergedFiles = [...existingFiles];
-
-  for (const incomingFile of incomingFiles) {
-    const alreadyTracked = mergedFiles.some(
-      (existingFile) =>
-        existingFile.name === incomingFile.name &&
-        existingFile.size === incomingFile.size &&
-        existingFile.lastModified === incomingFile.lastModified,
-    );
-
-    if (!alreadyTracked) {
-      mergedFiles.push(incomingFile);
-    }
-  }
-
-  return mergedFiles;
 }
 
 function matchesHorizon(uploadedAt: string, horizon: string): boolean {

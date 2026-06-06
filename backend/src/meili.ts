@@ -25,12 +25,26 @@ export async function ensureIndexReady(): Promise<void> {
 
       const index = meiliClient.index(config.meilisearchIndex);
       const settingsTask = await index.updateSettings({
-        searchableAttributes: ["title", "fileName", "content", "contentSearch", "tags", "source", "documentType"],
+        searchableAttributes: [
+          "title",
+          "fileName",
+          "content",
+          "contentSearch",
+          "applicationNames",
+          "documentCategory",
+          "programmingLanguages",
+          "tags",
+          "source",
+          "documentType",
+        ],
         displayedAttributes: [
           "id",
           "title",
           "fileName",
           "content",
+          "applicationNames",
+          "documentCategory",
+          "programmingLanguages",
           "storedFileName",
           "mimeType",
           "originalFileUrl",
@@ -40,7 +54,7 @@ export async function ensureIndexReady(): Promise<void> {
           "documentType",
           "source",
         ],
-        filterableAttributes: ["documentType", "source", "tags", "uploadedAt"],
+        filterableAttributes: ["documentType", "source", "tags", "uploadedAt", "applicationNames", "documentCategory", "programmingLanguages"],
         sortableAttributes: ["uploadedAt", "title"],
       });
 

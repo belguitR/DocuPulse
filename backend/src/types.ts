@@ -4,6 +4,9 @@ export type IndexedDocument = {
   fileName: string;
   content: string;
   contentSearch?: string;
+  applicationNames?: string[];
+  documentCategory?: string;
+  programmingLanguages?: string[];
   storedFileName?: string;
   mimeType?: string;
   originalFileUrl?: string;

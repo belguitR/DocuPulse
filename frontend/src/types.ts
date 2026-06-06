@@ -12,6 +12,9 @@ export type IndexResponse = {
     title: string;
     fileName: string;
     contentLength?: number;
+    applicationNames?: string[];
+    documentCategory?: string;
+    programmingLanguages?: string[];
     originalFileUrl?: string;
     previewFileUrl?: string;
   }>;
@@ -22,6 +25,9 @@ export type SearchHit = {
   title: string;
   fileName: string;
   content: string;
+  applicationNames: string[];
+  documentCategory?: string;
+  programmingLanguages: string[];
   storedFileName?: string;
   mimeType?: string;
   originalFileUrl?: string;
@@ -44,6 +50,9 @@ export type DocumentSummary = {
   title: string;
   fileName: string;
   contentLength: number;
+  applicationNames: string[];
+  documentCategory?: string;
+  programmingLanguages: string[];
   mimeType?: string;
   originalFileUrl?: string;
   previewFileUrl?: string;
